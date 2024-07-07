@@ -1,0 +1,87 @@
+--- prep data for Pareto analysis ---
+WITH prep AS (
+SELECT 
+  customer_id
+  , customer_name 
+  , COUNT(DISTINCT order_id) AS orders 
+  , SUM(sales) AS sales
+  , SUM(quantity) AS quantity
+  , SUM(profit) AS profit
+FROM  schema.test_superstore
+WHERE 1=1
+AND order_date IS NOT NULL
+AND order_date >= '2021-01-01' --- limit data 
+AND is_return = 0   --- net order only 
+GROUP BY 1,2
+)
+--- prep sales cumulative sum data ---
+, prep_sales AS (
+SELECT customer_id
+  , SUM(sales) AS sales
+	, SUM(SUM(sales)) OVER (ORDER BY SUM(sales) DESC) AS running_sum --- cumulative sum from first to last row 
+	, SUM(sales)*100.0/SUM(SUM(sales)) OVER () AS pct_con  --- denominator = total net_selling_amount 
+FROM prep
+GROUP BY 1 
+)
+--- apply running sum to identify 80% sales contributor ---
+, sales_metric AS (
+SELECT customer_id 
+	, sales 
+	, pct_con
+	, SUM(pct_con) OVER (ORDER BY pct_con DESC) AS cumu_pct
+	, CASE WHEN ROUND(SUM(pct_con) OVER (ORDER BY pct_con DESC),0) <= 80 THEN 1 ELSE 0 END AS is_pareto_sales
+FROM prep_sales 
+)
+--- prep quantity cumulative sum data ---
+, prep_quantity AS (
+SELECT customer_id
+  , SUM(quantity) AS quantity
+	, SUM(SUM(quantity)) OVER (ORDER BY SUM(quantity) DESC) AS running_sum --- cumulative sum from first to last row 
+	, SUM(quantity)*100.0/SUM(SUM(quantity)) OVER () AS pct_con  --- denominator = total net_selling_amount 
+FROM prep
+GROUP BY 1 
+)
+--- apply running sum to identify 80% quantity contributor ---
+, quantity_metric AS (
+SELECT customer_id 
+	, quantity 
+	, pct_con
+	, SUM(pct_con) OVER (ORDER BY pct_con DESC) AS cumu_pct
+	, CASE WHEN ROUND(SUM(pct_con) OVER (ORDER BY pct_con DESC),0) <= 80 THEN 1 ELSE 0 END AS is_pareto_quantity
+FROM prep_quantity 
+)
+--- prep profit cumulative sum data ---
+, prep_profit AS (
+SELECT customer_id
+  , SUM(profit) AS profit
+	, SUM(SUM(profit)) OVER (ORDER BY SUM(profit) DESC) AS running_sum --- cumulative sum from first to last row 
+	, SUM(profit)*100.0/SUM(SUM(profit)) OVER () AS pct_con  --- denominator = total net_selling_amount 
+FROM prep
+GROUP BY 1 
+)
+--- apply running sum to identify 80% profit contributor ---
+, profit_metric AS (
+SELECT customer_id 
+	, profit 
+	, pct_con
+	, SUM(pct_con) OVER (ORDER BY pct_con DESC) AS cumu_pct
+	, CASE WHEN ROUND(SUM(pct_con) OVER (ORDER BY pct_con DESC),0) <= 80 THEN 1 ELSE 0 END AS is_pareto_profit
+FROM prep_profit 
+)
+--- final output ---
+SELECT
+  d.customer_id 
+  , d.customer_name 
+  , s.sales AS total_sales
+  , s.is_pareto_sales
+  , q.quantity AS total_quantity 
+  , q.is_pareto_quantity 
+  , p.profit AS total_profit 
+  , p.is_pareto_profit
+FROM prep AS d
+LEFT JOIN sales_metric AS s
+  ON d.customer_id = s.customer_id
+LEFT JOIN quantity_metric AS q 
+  ON d.customer_id = q.customer_id
+LEFT JOIN profit_metric AS p 
+  ON d.customer_id = p.customer_id
